@@ -1,92 +1,114 @@
 const express = require('express');
+const mongoose = require('mongoose');
+const dotenv = require('dotenv');
+
+dotenv.config();
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 1.Parse incoming JSON request bodies
 app.use(express.json());
 
-// 2.Print timestamp, method, and route for every inbound request
 app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.originalUrl}`);
-  next();
+    const timestamp = new Date().toISOString();
+    console.log(`[${timestamp}] ${req.method} ${req.originalUrl}`);
+    next();
 });
 
-// In-Memory Dataset Matrix
-let resources = [
-  { id: '1', name: 'Q3 Analytics Sync', type: 'Event Profile', status: 'Active' },
-  { id: '2', name: 'Server Migration Task', type: 'Task', status: 'Pending' }
-];
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/resource-api';
+mongoose.connect(MONGO_URI)
+    .then(() => console.log('Connected to MongoDB successfully'))
+    .catch((err) => console.error('MongoDB connection error:', err));
 
-// --- ENDPOINT ARRAY MATRIX ---
+const resourceSchema = new mongoose.Schema({
+    name: { type: String, required: true, trim: true },
+    type: { type: String, default: 'General Item' },
+    status: { type: String, default: 'Active' }
+}, { timestamps: true });
 
-// GET /api/resources — Return all tracked collection elements
-app.get('/api/resources', (req, res) => {
-  res.status(200).json(resources);
+const Resource = mongoose.model('Resource', resourceSchema);
+
+app.get('/api/resources', async (req, res) => {
+    try {
+        const resources = await Resource.find({});
+        res.status(200).json(resources);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
-// GET /api/resources/:id — Target and isolate one unique collection item (404 if missing)
-app.get('/api/resources/:id', (req, res) => {
-  const resource = resources.find(r => r.id === req.params.id);
-  if (!resource) {
-    return res.status(404).json({ error: 'Resource not found' });
-  }
-  res.status(200).json(resource);
+app.get('/api/resources/:id', async (req, res) => {
+    try {
+        const resource = await Resource.findById(req.params.id);
+        if (!resource) {
+            return res.status(404).json({ error: 'Resource not found' });
+        }
+        res.status(200).json(resource);
+    } catch (error) {
+        res.status(404).json({ error: 'Resource not found or invalid ID format' });
+    }
 });
 
-// POST /api/resources — Collect inbound JSON, append unique tracking ID, push, return 201
-app.post('/api/resources', (req, res) => {
-  const { name, type, status } = req.body;
-  
-  if (!name) {
-    return res.status(400).json({ error: 'Validation Error: "name" property is required.' });
-  }
+app.post('/api/resources', async (req, res) => {
+    try {
+        const { name, type, status } = req.body;
 
-  const newResource = {
-    id: Date.now().toString(), // Generate a unique tracking ID based on timestamp
-    name,
-    type: type || 'General Item',
-    status: status || 'Active'
-  };
+        if (!name) {
+            return res.status(400).json({ error: 'Validation Error: "name" property is required.' });
+        }
 
-  resources.push(newResource);
-  res.status(201).json(newResource);
+        const newResource = await Resource.create({
+            name,
+            type: type || 'General Item',
+            status: status || 'Active'
+        });
+
+        res.status(201).json(newResource);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
 });
 
-// PUT /api/resources/:id — Safely update/overwrite properties for a matching target ID
-app.put('/api/resources/:id', (req, res) => {
-  const index = resources.findIndex(r => r.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Resource not found' });
-  }
+app.put('/api/resources/:id', async (req, res) => {
+    try {
+        const { name, type, status } = req.body;
 
-  const { name, type, status } = req.body;
-  
-  resources[index] = {
-    ...resources[index],
-    ...(name !== undefined && { name }),
-    ...(type !== undefined && { type }),
-    ...(status !== undefined && { status })
-  };
+        const updatedResource = await Resource.findByIdAndUpdate(
+            req.params.id,
+            {
+                ...(name !== undefined && { name }),
+                ...(type !== undefined && { type }),
+                ...(status !== undefined && { status })
+            },
+            { new: true, runValidators: true }
+        );
 
-  res.status(200).json(resources[index]);
+        if (!updatedResource) {
+            return res.status(404).json({ error: 'Resource not found' });
+        }
+
+        res.status(200).json(updatedResource);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
 });
 
-// DELETE /api/resources/:id — Target and splice out the matching object from the array
-app.delete('/api/resources/:id', (req, res) => {
-  const index = resources.findIndex(r => r.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Resource not found' });
-  }
+app.delete('/api/resources/:id', async (req, res) => {
+    try {
+        const removedResource = await Resource.findByIdAndDelete(req.params.id);
+        if (!removedResource) {
+            return res.status(404).json({ error: 'Resource not found' });
+        }
 
-  const [removedResource] = resources.splice(index, 1);
-  res.status(200).json({
-    message: 'Resource successfully deleted',
-    deleted: removedResource
-  });
+        res.status(200).json({
+            message: 'Resource successfully deleted',
+            deleted: removedResource
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
-// Initialize Server Listener
 app.listen(PORT, () => {
-  console.log(`🚀 REST API Engine running live at http://localhost:${PORT}`);
+    console.log(`REST API Engine running live at http://localhost:${PORT}`);
 });
